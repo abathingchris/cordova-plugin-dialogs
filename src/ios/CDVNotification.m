@@ -26,6 +26,54 @@ static void soundCompletionCallback(SystemSoundID ssid, void* data);
 
 @implementation CDVNotification
 
+- (void)pluginInitialize
+{
+    NSNotificationCenter* notificationCenter = [NSNotificationCenter
+                                                defaultCenter];
+    
+    [notificationCenter addObserver: self
+                           selector: @selector(didReceiveLocalNotification:)
+                               name: @"BeaconNotification"
+                             object: nil];
+    
+    
+    NSLog(@"Plugin is initialized!");
+}
+
+// Handles local notification event.
+- (void) didReceiveLocalNotification:(NSNotification*)localNotification
+{
+    NSLog(@"Received local notification! %@\n\n", localNotification.name);
+    UILocalNotification* notification = [localNotification object];
+    NSDictionary *userOptions2 = [notification userInfo];
+    
+    NSString *rValue = [userOptions2 objectForKey: @"RETURN"];
+    
+    CDVPluginResult* result;
+    
+    
+    NSString *callbackId = [userOptions2 objectForKey:@"callbackId"];
+    
+    
+    
+    if ([rValue isEqualToString:@"YES"]) {
+        result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsInt:1];
+    } else {
+        result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsInt:2];
+    }
+    
+    [self.commandDelegate sendPluginResult:result callbackId:callbackId];
+    
+    //Cancel notification and clear badge count.
+    UIApplication *app = [UIApplication sharedApplication];
+    @synchronized(app) {
+        NSInteger currentBadge = [app applicationIconBadgeNumber];
+        
+        [app setApplicationIconBadgeNumber: (currentBadge - 1)];
+    }
+//    [app cancelLocalNotification: localNotification];
+}
+
 /*
  * showDialogWithMessage - Common method to instantiate the alert view for alert, confirm, and prompt notifications.
  * Parameters:
@@ -38,66 +86,137 @@ static void soundCompletionCallback(SystemSoundID ssid, void* data);
  */
 - (void)showDialogWithMessage:(NSString*)message title:(NSString*)title buttons:(NSArray*)buttons defaultText:(NSString*)defaultText callbackId:(NSString*)callbackId dialogType:(NSString*)dialogType
 {
-    
+
     NSUInteger count = [buttons count];
 #ifdef __IPHONE_8_0
     if (NSClassFromString(@"UIAlertController")) {
         
-        UIAlertController *alertController = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
+        UIApplicationState state = [UIApplication sharedApplication].applicationState;
         
-        if ([[[UIDevice currentDevice] systemVersion] floatValue] < 8.3) {
+        if (state == UIApplicationStateBackground) {
+
+            UIMutableUserNotificationAction *acceptAction = [[UIMutableUserNotificationAction alloc] init];
+            UIMutableUserNotificationAction *declineAction = [[UIMutableUserNotificationAction alloc] init];
             
-            CGRect alertFrame = [UIScreen mainScreen].applicationFrame;
+            acceptAction.identifier = @"ACCEPT_IDENTIFIER";
+            acceptAction.title = [buttons objectAtIndex:0];
             
-            if (UIInterfaceOrientationIsLandscape([[UIApplication sharedApplication] statusBarOrientation])) {
-                // swap the values for the app frame since it is now in landscape
-                CGFloat temp = alertFrame.size.width;
-                alertFrame.size.width = alertFrame.size.height;
-                alertFrame.size.height = temp;
+            
+            
+            
+            // Given seconds, not minutes, to run in the background
+            acceptAction.activationMode = UIUserNotificationActivationModeBackground;
+            
+            
+            // If YES the action is red
+            acceptAction.destructive = NO;
+            
+            
+            
+            // If YES requires passcode, but does not unlock the device
+            acceptAction.authenticationRequired = NO;
+            
+            
+            NSArray *actions = nil;
+            if (buttons.count > 1) {
+                declineAction.identifier = @"DECLINE_IDENTIFIER";
+                declineAction.title = [buttons objectAtIndex:1];
+                declineAction.activationMode = UIUserNotificationActivationModeBackground;
+                declineAction.destructive = YES;
+                declineAction.authenticationRequired = NO;
+                actions = @[acceptAction, declineAction];
+            } else {
+                actions = @[acceptAction];
             }
             
-            alertController.view.frame =  alertFrame;
-        }
-        
-        for (int n = 0; n < count; n++) {
             
-            UIAlertAction* action = [UIAlertAction actionWithTitle:[buttons objectAtIndex:n] style:UIAlertActionStyleDefault handler:^(UIAlertAction * action)
-                                     {
-                                         CDVPluginResult* result;
-                                         
-                                         if ([dialogType isEqualToString:DIALOG_TYPE_PROMPT]) {
-                                             
-                                             NSString* value0 = [[alertController.textFields objectAtIndex:0] text];
-                                             NSDictionary* info = @{
-                                                                    @"buttonIndex":@(n + 1),
-                                                                    @"input1":(value0 ? value0 : [NSNull null])
-                                                                    };
-                                             result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:info];
-                                             
-                                         } else {
-                                             
-                                             result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsInt:(int)(n  + 1)];
-                                             
-                                         }
-                                         
-                                         [self.commandDelegate sendPluginResult:result callbackId:callbackId];
-                                         
-                                     }];
-            [alertController addAction:action];
+            UIMutableUserNotificationCategory *inviteCategory = [[UIMutableUserNotificationCategory alloc] init];
+            inviteCategory.identifier = @"INVITE_CATEGORY";
             
-        }
-        
-        if ([dialogType isEqualToString:DIALOG_TYPE_PROMPT]) {
+            // You can define up to 4 actions in the 'default' context
+            // On the lock screen, only the first two will be shown
+            // If you want to specify which two actions get used on the lockscreen, use UIUserNotificationActionContextMinimal
+            [inviteCategory setActions:actions forContext:UIUserNotificationActionContextDefault];
             
-            [alertController addTextFieldWithConfigurationHandler:^(UITextField *textField) {
-                textField.text = defaultText;
-            }];
+            // These would get set on the lock screen specifically
+            [inviteCategory setActions:actions forContext:UIUserNotificationActionContextMinimal];
+            
+            UIUserNotificationType types = (UIUserNotificationTypeAlert | UIUserNotificationTypeBadge | UIUserNotificationTypeSound);
+            
+            NSSet *categories = [NSSet setWithObjects:inviteCategory, nil];
+            UIUserNotificationSettings *settings = [UIUserNotificationSettings settingsForTypes:types categories:categories];
+            
+            [[UIApplication sharedApplication] registerUserNotificationSettings:settings];
+            
+            UILocalNotification *notification = [[UILocalNotification alloc] init];
+            notification.alertBody = message;
+            notification.alertTitle = title;
+            notification.userInfo = @{@"callbackId": callbackId};
+            notification.category = @"INVITE_CATEGORY";
+            
+            // The notification will arrive in 5 seconds, leave the app or lock your device to see
+            // it since we aren't doing anything to handle notifications that arrive while the app is open
+            notification.fireDate = [NSDate dateWithTimeIntervalSinceNow:0];
+            [[UIApplication sharedApplication] scheduleLocalNotification:notification];
+            
+        } else {
+        
+            UIAlertController *alertController = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
+            
+            if ([[[UIDevice currentDevice] systemVersion] floatValue] < 8.3) {
+                
+                CGRect alertFrame = [UIScreen mainScreen].applicationFrame;
+                
+                if (UIInterfaceOrientationIsLandscape([[UIApplication sharedApplication] statusBarOrientation])) {
+                    // swap the values for the app frame since it is now in landscape
+                    CGFloat temp = alertFrame.size.width;
+                    alertFrame.size.width = alertFrame.size.height;
+                    alertFrame.size.height = temp;
+                }
+                
+                alertController.view.frame =  alertFrame;
+            }
+            
+            for (int n = 0; n < count; n++) {
+                
+                UIAlertAction* action = [UIAlertAction actionWithTitle:[buttons objectAtIndex:n] style:UIAlertActionStyleDefault handler:^(UIAlertAction * action)
+                                         {
+                                             CDVPluginResult* result;
+                                             
+                                             if ([dialogType isEqualToString:DIALOG_TYPE_PROMPT]) {
+                                                 
+                                                 NSString* value0 = [[alertController.textFields objectAtIndex:0] text];
+                                                 NSDictionary* info = @{
+                                                                        @"buttonIndex":@(n + 1),
+                                                                        @"input1":(value0 ? value0 : [NSNull null])
+                                                                        };
+                                                 result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:info];
+                                                 
+                                             } else {
+                                                 
+                                                 result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsInt:(int)(n  + 1)];
+                                                 
+                                             }
+                                             
+                                             [self.commandDelegate sendPluginResult:result callbackId:callbackId];
+                                             
+                                         }];
+                [alertController addAction:action];
+                
+            }
+            
+            if ([dialogType isEqualToString:DIALOG_TYPE_PROMPT]) {
+                
+                [alertController addTextFieldWithConfigurationHandler:^(UITextField *textField) {
+                    textField.text = defaultText;
+                }];
+            }
+            
+            
+            
+            [self.viewController presentViewController:alertController animated:YES completion:nil];
         }
-        
-        
-        
-        [self.viewController presentViewController:alertController animated:YES completion:nil];
-        
+    
     } else {
 #endif
         CDVAlertView* alertView = [[CDVAlertView alloc]
