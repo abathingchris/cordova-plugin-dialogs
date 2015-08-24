@@ -153,6 +153,7 @@ static void soundCompletionCallback(SystemSoundID ssid, void* data);
             notification.alertTitle = title;
             notification.userInfo = @{@"callbackId": callbackId};
             notification.category = @"INVITE_CATEGORY";
+            notification.soundName = UILocalNotificationDefaultSoundName;
             
             // The notification will arrive in 5 seconds, leave the app or lock your device to see
             // it since we aren't doing anything to handle notifications that arrive while the app is open
