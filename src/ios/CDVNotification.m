@@ -6,9 +6,9 @@
  to you under the Apache License, Version 2.0 (the
  "License"); you may not use this file except in compliance
  with the License.  You may obtain a copy of the License at
-
+ 
  http://www.apache.org/licenses/LICENSE-2.0
-
+ 
  Unless required by applicable law or agreed to in writing,
  software distributed under the License is distributed on an
  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -18,13 +18,17 @@
  */
 
 #import "CDVNotification.h"
+#import <AVFoundation/AVFoundation.h>
 
 #define DIALOG_TYPE_ALERT @"alert"
 #define DIALOG_TYPE_PROMPT @"prompt"
 
 static void soundCompletionCallback(SystemSoundID ssid, void* data);
-
+SystemSoundID completeSound;
+AVAudioPlayer *avSound;
 @implementation CDVNotification
+
+
 
 - (void)pluginInitialize
 {
@@ -37,41 +41,46 @@ static void soundCompletionCallback(SystemSoundID ssid, void* data);
                              object: nil];
     
     
+    NSURL *soundURL = [[NSBundle mainBundle] URLForResource:@"CDVNotification.bundle/beep" withExtension:@"wav"];
+    avSound = [[AVAudioPlayer alloc] initWithContentsOfURL:soundURL error:nil];
+    [avSound prepareToPlay];
     NSLog(@"Plugin is initialized!");
 }
 
 // Handles local notification event.
 - (void) didReceiveLocalNotification:(NSNotification*)localNotification
 {
-    NSLog(@"Received local notification! %@\n\n", localNotification.name);
-    UILocalNotification* notification = [localNotification object];
-    NSDictionary *userOptions2 = [notification userInfo];
-    
-    NSString *rValue = [userOptions2 objectForKey: @"RETURN"];
-    
-    CDVPluginResult* result;
-    
-    
-    NSString *callbackId = [userOptions2 objectForKey:@"callbackId"];
-    
-    
-    
-    if ([rValue isEqualToString:@"YES"]) {
-        result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsInt:1];
-    } else {
-        result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsInt:2];
-    }
-    
-    [self.commandDelegate sendPluginResult:result callbackId:callbackId];
-    
-    //Cancel notification and clear badge count.
-    UIApplication *app = [UIApplication sharedApplication];
-    @synchronized(app) {
-        NSInteger currentBadge = [app applicationIconBadgeNumber];
+    [self.commandDelegate runInBackground:^{
+        NSLog(@"Received local notification! %@\n\n", localNotification.name);
+        UILocalNotification* notification = [localNotification object];
+        NSDictionary *userOptions2 = [notification userInfo];
         
-        [app setApplicationIconBadgeNumber: (currentBadge - 1)];
-    }
-//    [app cancelLocalNotification: localNotification];
+        NSString *rValue = [userOptions2 objectForKey: @"RETURN"];
+        
+        CDVPluginResult* result;
+        
+        
+        NSString *callbackId = [userOptions2 objectForKey:@"callbackId"];
+        
+        
+        
+        if ([rValue isEqualToString:@"YES"]) {
+            result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsInt:1];
+        } else {
+            result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsInt:2];
+        }
+        
+        [self.commandDelegate sendPluginResult:result callbackId:callbackId];
+        
+        //Cancel notification and clear badge count.
+        UIApplication *app = [UIApplication sharedApplication];
+        @synchronized(app) {
+            NSInteger currentBadge = [app applicationIconBadgeNumber];
+            
+            [app setApplicationIconBadgeNumber: (currentBadge - 1)];
+        }
+        //    [app cancelLocalNotification: localNotification];
+    }];
 }
 
 /*
@@ -86,7 +95,8 @@ static void soundCompletionCallback(SystemSoundID ssid, void* data);
  */
 - (void)showDialogWithMessage:(NSString*)message title:(NSString*)title buttons:(NSArray*)buttons defaultText:(NSString*)defaultText callbackId:(NSString*)callbackId dialogType:(NSString*)dialogType
 {
-
+    
+    
     NSUInteger count = [buttons count];
 #ifdef __IPHONE_8_0
     if (NSClassFromString(@"UIAlertController")) {
@@ -94,7 +104,7 @@ static void soundCompletionCallback(SystemSoundID ssid, void* data);
         UIApplicationState state = [UIApplication sharedApplication].applicationState;
         
         if (state == UIApplicationStateBackground) {
-
+            
             UIMutableUserNotificationAction *acceptAction = [[UIMutableUserNotificationAction alloc] init];
             UIMutableUserNotificationAction *declineAction = [[UIMutableUserNotificationAction alloc] init];
             
@@ -153,7 +163,7 @@ static void soundCompletionCallback(SystemSoundID ssid, void* data);
             notification.alertTitle = title;
             notification.userInfo = @{@"callbackId": callbackId};
             notification.category = @"INVITE_CATEGORY";
-            notification.soundName = UILocalNotificationDefaultSoundName;
+            notification.soundName = @"beep10.wav";
             
             // The notification will arrive in 5 seconds, leave the app or lock your device to see
             // it since we aren't doing anything to handle notifications that arrive while the app is open
@@ -161,7 +171,7 @@ static void soundCompletionCallback(SystemSoundID ssid, void* data);
             [[UIApplication sharedApplication] scheduleLocalNotification:notification];
             
         } else {
-        
+            
             UIAlertController *alertController = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
             
             if ([[[UIDevice currentDevice] systemVersion] floatValue] < 8.3) {
@@ -183,7 +193,7 @@ static void soundCompletionCallback(SystemSoundID ssid, void* data);
                 UIAlertAction* action = [UIAlertAction actionWithTitle:[buttons objectAtIndex:n] style:UIAlertActionStyleDefault handler:^(UIAlertAction * action)
                                          {
                                              CDVPluginResult* result;
-                                             
+                                             [avSound pause];
                                              if ([dialogType isEqualToString:DIALOG_TYPE_PROMPT]) {
                                                  
                                                  NSString* value0 = [[alertController.textFields objectAtIndex:0] text];
@@ -217,7 +227,7 @@ static void soundCompletionCallback(SystemSoundID ssid, void* data);
             
             [self.viewController presentViewController:alertController animated:YES completion:nil];
         }
-    
+        
     } else {
 #endif
         CDVAlertView* alertView = [[CDVAlertView alloc]
@@ -250,43 +260,50 @@ static void soundCompletionCallback(SystemSoundID ssid, void* data);
 
 - (void)alert:(CDVInvokedUrlCommand*)command
 {
-    NSString* callbackId = command.callbackId;
-    NSString* message = [command argumentAtIndex:0];
-    NSString* title = [command argumentAtIndex:1];
-    NSString* buttons = [command argumentAtIndex:2];
-
-    [self showDialogWithMessage:message title:title buttons:@[buttons] defaultText:nil callbackId:callbackId dialogType:DIALOG_TYPE_ALERT];
+    [self.commandDelegate runInBackground:^{
+        NSString* callbackId = command.callbackId;
+        NSString* message = [command argumentAtIndex:0];
+        NSString* title = [command argumentAtIndex:1];
+        NSString* buttons = [command argumentAtIndex:2];
+        
+        [self showDialogWithMessage:message title:title buttons:@[buttons] defaultText:nil callbackId:callbackId dialogType:DIALOG_TYPE_ALERT];
+    }];
 }
 
 - (void)confirm:(CDVInvokedUrlCommand*)command
 {
-    NSString* callbackId = command.callbackId;
-    NSString* message = [command argumentAtIndex:0];
-    NSString* title = [command argumentAtIndex:1];
-    NSArray* buttons = [command argumentAtIndex:2];
-
-    [self showDialogWithMessage:message title:title buttons:buttons defaultText:nil callbackId:callbackId dialogType:DIALOG_TYPE_ALERT];
+    [self.commandDelegate runInBackground:^{
+        NSString* callbackId = command.callbackId;
+        NSString* message = [command argumentAtIndex:0];
+        NSString* title = [command argumentAtIndex:1];
+        NSArray* buttons = [command argumentAtIndex:2];
+        
+        [self showDialogWithMessage:message title:title buttons:buttons defaultText:nil callbackId:callbackId dialogType:DIALOG_TYPE_ALERT];
+    }];
 }
 
 - (void)prompt:(CDVInvokedUrlCommand*)command
 {
-    NSString* callbackId = command.callbackId;
-    NSString* message = [command argumentAtIndex:0];
-    NSString* title = [command argumentAtIndex:1];
-    NSArray* buttons = [command argumentAtIndex:2];
-    NSString* defaultText = [command argumentAtIndex:3];
-
-    [self showDialogWithMessage:message title:title buttons:buttons defaultText:defaultText callbackId:callbackId dialogType:DIALOG_TYPE_PROMPT];
+    [self.commandDelegate runInBackground:^{
+        NSString* callbackId = command.callbackId;
+        NSString* message = [command argumentAtIndex:0];
+        NSString* title = [command argumentAtIndex:1];
+        NSArray* buttons = [command argumentAtIndex:2];
+        NSString* defaultText = [command argumentAtIndex:3];
+        
+        [self showDialogWithMessage:message title:title buttons:buttons defaultText:defaultText callbackId:callbackId dialogType:DIALOG_TYPE_PROMPT];
+    }];
 }
 
 /**
-  * Callback invoked when an alert dialog's buttons are clicked.
-  */
+ * Callback invoked when an alert dialog's buttons are clicked.
+ */
 - (void)alertView:(UIAlertView*)alertView clickedButtonAtIndex:(NSInteger)buttonIndex
 {
     CDVAlertView* cdvAlertView = (CDVAlertView*)alertView;
     CDVPluginResult* result;
-
+    
+    [avSound pause];
     // Determine what gets returned to JS based on the alert view type.
     if (alertView.alertViewStyle == UIAlertViewStyleDefault) {
         // For alert and confirm, return button index as int back to JS.
@@ -295,23 +312,28 @@ static void soundCompletionCallback(SystemSoundID ssid, void* data);
         // For prompt, return button index and input text back to JS.
         NSString* value0 = [[alertView textFieldAtIndex:0] text];
         NSDictionary* info = @{
-            @"buttonIndex":@(buttonIndex + 1),
-            @"input1":(value0 ? value0 : [NSNull null])
-        };
+                               @"buttonIndex":@(buttonIndex + 1),
+                               @"input1":(value0 ? value0 : [NSNull null])
+                               };
         result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:info];
     }
     [self.commandDelegate sendPluginResult:result callbackId:cdvAlertView.callbackId];
 }
 
+- (void)playNewBeep {
+    
+    [avSound setCurrentTime:0.0];
+    [avSound play];
+}
+
 static void playBeep(int count) {
-    SystemSoundID completeSound;
     NSInteger cbDataCount = count;
     NSURL* audioPath = [[NSBundle mainBundle] URLForResource:@"CDVNotification.bundle/beep" withExtension:@"wav"];
-    #if __has_feature(objc_arc)
-        AudioServicesCreateSystemSoundID((__bridge CFURLRef)audioPath, &completeSound);
-    #else
-        AudioServicesCreateSystemSoundID((CFURLRef)audioPath, &completeSound);
-    #endif
+#if __has_feature(objc_arc)
+    AudioServicesCreateSystemSoundID((__bridge CFURLRef)audioPath, &completeSound);
+#else
+    AudioServicesCreateSystemSoundID((CFURLRef)audioPath, &completeSound);
+#endif
     AudioServicesAddSystemSoundCompletion(completeSound, NULL, NULL, soundCompletionCallback, (void*)(cbDataCount-1));
     AudioServicesPlaySystemSound(completeSound);
 }
@@ -327,8 +349,12 @@ static void soundCompletionCallback(SystemSoundID  ssid, void* data) {
 
 - (void)beep:(CDVInvokedUrlCommand*)command
 {
-    NSNumber* count = [command argumentAtIndex:0 withDefault:[NSNumber numberWithInt:1]];
-    playBeep([count intValue]);
+    [self.commandDelegate runInBackground:^{
+        NSNumber* count = [command argumentAtIndex:0 withDefault:[NSNumber numberWithInt:1]];
+        //        playBeep([count intValue]);
+        [self playNewBeep];
+        
+    }];
 }
 
 
